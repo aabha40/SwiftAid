@@ -1,8 +1,24 @@
 const express = require('express');
 const router = express.Router();
 
-router.get('/health', (req, res) => {
-  res.json({ success: true, message: 'Admin routes — coming in Phase 2' });
-});
+const {
+  getAllUsers,
+  getAllAmbulances,
+  getAllHospitals,
+  getStats,
+  toggleUserStatus,
+} = require('../controllers/adminController');
+
+const { protect } = require('../middleware/auth');
+const { authorize } = require('../middleware/rbac');
+
+// All admin routes require super_admin role
+router.use(protect, authorize('super_admin'));
+
+router.get('/users', getAllUsers);
+router.get('/ambulances', getAllAmbulances);
+router.get('/hospitals', getAllHospitals);
+router.get('/stats', getStats);
+router.patch('/users/:id/toggle', toggleUserStatus);
 
 module.exports = router;
