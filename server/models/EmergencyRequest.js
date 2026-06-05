@@ -41,11 +41,10 @@ const emergencyRequestSchema = new mongoose.Schema(
 );
 
 // Auto-set priority score when request is created
-emergencyRequestSchema.pre('save', function (next) {
+emergencyRequestSchema.pre('save', function () {
   if (this.isNew) {
     this.priorityScore = PRIORITY_SCORES[this.emergencyType] || 50;
   }
-  next();
 });
 
 emergencyRequestSchema.index({ pickupLocation: '2dsphere' });
