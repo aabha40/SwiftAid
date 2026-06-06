@@ -11,6 +11,11 @@ const { findBestHospital } = require('../services/hospitalScore');
 const { calculateETA } = require('../services/eta');
 const auditLogger = require('../services/auditLogger');
 const { REQUEST_STATUS, AMBULANCE_STATUS, TIMEOUTS } = require('../utils/constants');
+const {
+  notifyPatientAmbulanceAssigned,
+  notifyDriverNewRequest,
+  notifyHospitalIncomingPatient,
+} = require('../services/notification');
 
 // ─────────────────────────────────────────────────────────────────
 // POST /api/requests
@@ -136,7 +141,38 @@ const createRequest = async (req, res, next) => {
     });
 
     console.log(`✅ Assignment complete: ${ambulance.vehicleNumber} → Patient | ETA: ${etaMinutes} mins`);
+    // ── STEP 9: Send push notifications ──────────────────────────
+const patient = req.user;
 
+// Notify patient their ambulance is coming
+await notifyPatientAmbulanceAssigned(patient.fcmToken, {
+  vehicleNumber: ambulance.vehicleNumber,
+  etaMinutes,
+  driverName: ambulance.driverId?.name || 'Driver',
+  tripId: trip._id.toString(),
+});
+
+// Notify driver about new request
+if (ambulance.driverId?.fcmToken) {
+  await notifyDriverNewRequest(ambulance.driverId.fcmToken, {
+    requestId: emergencyRequest._id.toString(),
+    emergencyType,
+    distanceKm: parseFloat(distanceKm.toFixed(2)),
+  });
+}
+
+// Notify hospital admin about incoming patient
+if (hospitalResult?.hospital?.adminId) {
+  const User = require('../models/User');
+  const hospitalAdmin = await User.findById(hospitalResult.hospital.adminId);
+  if (hospitalAdmin?.fcmToken) {
+    await notifyHospitalIncomingPatient(hospitalAdmin.fcmToken, {
+      emergencyType,
+      etaMinutes,
+      tripId: trip._id.toString(),
+    });
+  }
+}
     // ── STEP 8: Send response to patient ─────────────────────────
     res.status(201).json({
       success: true,

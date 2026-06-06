@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>SwiftAid WebSocket Test</title>
+  <script src="http://localhost:5000/socket.io/socket.io.js"></script>
+  <style>
+    body { font-family: Arial; padding: 20px; background: #1a1a2e; color: #fff; }
+    button { padding: 10px 20px; margin: 5px; background: #e94560; color: white; border: none; border-radius: 5px; cursor: pointer; }
+    #log { background: #16213e; padding: 15px; border-radius: 8px; margin-top: 20px; min-height: 200px; }
+    .success { color: #4ade80; }
+    .error { color: #f87171; }
+    .info { color: #60a5fa; }
+    input { padding: 8px; width: 400px; background: #16213e; color: white; border: 1px solid #444; border-radius: 5px; }
+  </style>
+</head>
+<body>
+
+  <h2>🚑 SwiftAid WebSocket Tester</h2>
+
+  <div>
+    <label>Driver Token (paste from Thunder Client):</label><br><br>
+    <textarea id="token" placeholder="Paste your driver token here (without Bearer)" 
+  style="width:600px; height:80px; background:#16213e; color:white; border:1px solid #444; border-radius:5px; padding:8px; font-size:12px;"></textarea>
+    <br><br>
+    <input type="text" id="tripId" placeholder="Paste your Trip ID here"/>
+    <br><br>
+    <input type="text" id="ambulanceId" placeholder="Paste your Ambulance ID here"/>
+  </div>
+
+  <br>
+  <button onclick="connectSocket()">1. Connect</button>
+  <button onclick="joinTrip()">2. Join Trip Room</button>
+  <button onclick="sendLocation()">3. Send Location Update</button>
+  <button onclick="sendHeartbeat()">4. Send Heartbeat</button>
+  <button onclick="sendStatus()">5. Update Status → Accepted</button>
+  <button onclick="disconnectSocket()">Disconnect</button>
+
+  <div id="log"><p class="info">Logs will appear here...</p></div>
+
+  <script>
+    let socket = null;
+
+    function log(message, type = 'info') {
+      const div = document.getElementById('log');
+      const time = new Date().toLocaleTimeString();
+      div.innerHTML += `<p class="${type}">[${time}] ${message}</p>`;
+      div.scrollTop = div.scrollHeight;
+    }
+
+    function connectSocket() {
+      const token = document.getElementById('token').value.trim();
+      if (!token) { log('❌ Please paste your driver token first!', 'error'); return; }
+
+      log('Connecting to SwiftAid server...', 'info');
+
+      socket = io('http://localhost:5000', {
+        auth: { token: 'Bearer ' + token }
+      });
+
+      socket.on('connect', () => {
+        log('✅ Connected! Socket ID: ' + socket.id, 'success');
+      });
+
+      socket.on('connect_error', (err) => {
+        log('❌ Connection error: ' + err.message, 'error');
+      });
+
+      socket.on('ambulance_location', (data) => {
+        log('📍 Location broadcast received: ' + JSON.stringify(data), 'success');
+      });
+
+      socket.on('trip_status_update', (data) => {
+        log('🔄 Status update: ' + data.message, 'success');
+      });
+
+      socket.on('heartbeat_ack', (data) => {
+        log('💓 Heartbeat acknowledged: ' + data.timestamp, 'success');
+      });
+
+      socket.on('joined_trip', (data) => {
+        log('👥 Joined trip room: ' + data.tripId, 'success');
+      });
+
+      socket.on('pong_server', (data) => {
+        log('🏓 Pong from server: ' + data.message, 'success');
+      });
+
+      socket.on('error', (data) => {
+        log('❌ Server error: ' + data.message, 'error');
+      });
+
+      socket.on('disconnect', (reason) => {
+        log('🔌 Disconnected: ' + reason, 'error');
+      });
+    }
+
+    function joinTrip() {
+      if (!socket) { log('❌ Connect first!', 'error'); return; }
+      const tripId = document.getElementById('tripId').value.trim();
+      if (!tripId) { log('❌ Please paste Trip ID!', 'error'); return; }
+
+      socket.emit('join_trip', { tripId });
+      log('Joining trip room: ' + tripId, 'info');
+    }
+
+    function sendLocation() {
+      if (!socket) { log('❌ Connect first!', 'error'); return; }
+      const tripId = document.getElementById('tripId').value.trim();
+      const ambulanceId = document.getElementById('ambulanceId').value.trim();
+
+      // Slightly different coordinates each time to simulate movement
+      const lng = 81.6300 + (Math.random() * 0.01);
+      const lat = 21.2520 + (Math.random() * 0.01);
+
+      socket.emit('location_update', {
+        tripId,
+        ambulanceId,
+        longitude: lng,
+        latitude: lat
+      });
+      log(`📍 Sent location: ${lat.toFixed(4)}, ${lng.toFixed(4)}`, 'info');
+    }
+
+    function sendHeartbeat() {
+      if (!socket) { log('❌ Connect first!', 'error'); return; }
+      const ambulanceId = document.getElementById('ambulanceId').value.trim();
+
+      socket.emit('heartbeat', { ambulanceId });
+      log('💓 Heartbeat sent', 'info');
+    }
+
+    function sendStatus() {
+      if (!socket) { log('❌ Connect first!', 'error'); return; }
+      const tripId = document.getElementById('tripId').value.trim();
+
+      // Get requestId from your Phase 3 test
+      const requestId = prompt('Paste your Request ID:');
+
+      socket.emit('status_update', {
+        tripId,
+        requestId,
+        status: 'accepted'
+      });
+      log('🔄 Status update sent: accepted', 'info');
+    }
+
+    function disconnectSocket() {
+      if (socket) {
+        socket.disconnect();
+        log('Disconnected manually', 'info');
+      }
+    }
+  </script>
+</body>
+</html>
