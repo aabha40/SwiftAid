@@ -106,13 +106,15 @@ const registerSocketHandlers = (io) => {
     // ── DISCONNECT ────────────────────────────────────────────
     // Fires when socket connection drops (app closed, network loss)
     socket.on('disconnect', async (reason) => {
-      console.log(`🔌 Socket disconnected: ${socket.user.name} | Reason: ${reason}`);
-
-      // If a driver disconnects, mark their ambulance offline
-      if (socket.user.role === 'driver' && socket.user.ambulanceId) {
-        await handleDriverDisconnect(socket.user.ambulanceId.toString());
-      }
-    });
+  try {
+    console.log(`🔌 Disconnected: ${socket.user.name} | ${reason}`);
+    if (socket.user.role === 'driver' && socket.user.ambulanceId) {
+      await handleDriverDisconnect(socket.user.ambulanceId.toString());
+    }
+  } catch (error) {
+    console.error(`❌ Disconnect handler error: ${error.message}`);
+  }
+});
 
     // ── PING (connection test) ────────────────────────────────
     socket.on('ping_server', () => {

@@ -87,8 +87,8 @@ const scoredHospitals = (hospitals, lng, lat, emergencyType) => {
       // Bed availability score (0 to 1)
       // More available beds relative to total = higher score
       const bedScore = hospital.totalBeds > 0
-        ? hospital.availableBeds / hospital.totalBeds
-        : 0;
+  ? Math.min(hospital.availableBeds, hospital.totalBeds) / hospital.totalBeds
+  : 0;
 
       // Distance score (0 to 1) — closer is better
       const distanceScore = Math.max(0, 1 - (distKm / MAX_DISTANCE_KM));
