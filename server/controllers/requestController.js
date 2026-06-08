@@ -232,15 +232,18 @@ const createRequest = async (req, res, next) => {
             : null,
         },
         hospital: hospitalResult
-          ? {
-              id: hospitalResult.hospital._id,
-              name: hospitalResult.hospital.name,
-              address: hospitalResult.hospital.address,
-              phone: hospitalResult.hospital.phone,
-              distanceKm: parseFloat(hospitalResult.distKm.toFixed(2)),
-              availableBeds: hospitalResult.hospital.availableBeds,
-            }
-          : null,
+  ? {
+      id: hospitalResult.hospital._id,
+      name: hospitalResult.hospital.name,
+      address: hospitalResult.hospital.address,
+      phone: hospitalResult.hospital.phone,
+      distanceKm: parseFloat(hospitalResult.distKm.toFixed(2)),
+      availableBeds: hospitalResult.hospital.availableBeds,
+      // Include coordinates for frontend map pin
+      latitude: hospitalResult.hospital.location.coordinates[1],
+      longitude: hospitalResult.hospital.location.coordinates[0],
+    }
+  : null,
       },
     });
 
