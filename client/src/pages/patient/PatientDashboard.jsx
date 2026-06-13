@@ -72,7 +72,7 @@ export default function PatientDashboard() {
   // Disconnect any existing connection first
   if (socketRef.current) socketRef.current.disconnect();
 
-  socketRef.current = io('http://localhost:5000', {
+  socketRef.current = io(process.env.REACT_APP_SOCKET_URL || 'http://localhost:5000', {
     auth: { token: `Bearer ${token}` },
   });
 

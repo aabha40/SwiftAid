@@ -1,0 +1,61 @@
+# ─────────────────────────────────────────────────────────
+# docker-compose.yml — Run entire SwiftAid stack locally
+# ─────────────────────────────────────────────────────────
+#
+# docker-compose up = starts all 3 services together
+# Docker creates a private network so they can talk to each other
+# using service names as hostnames (mongodb, redis)
+#
+
+version: '3.8'
+
+services:
+
+  # ── MongoDB ────────────────────────────────────────────
+  mongodb:
+    image: mongo:7          # official MongoDB image
+    container_name: swiftaid-mongo
+    restart: unless-stopped
+    ports:
+      - "27018:27017"       # host:container (27018 avoids conflict with local mongo)
+    volumes:
+      - mongo_data:/data/db # persist data even when container restarts
+    environment:
+      MONGO_INITDB_DATABASE: swiftaid
+
+  # ── Redis ──────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine   # official Redis image, alpine = tiny
+    container_name: swiftaid-redis
+    restart: unless-stopped
+    ports:
+      - "6380:6379"         # host:container (6380 avoids conflict with local redis)
+    volumes:
+      - redis_data:/data    # persist redis data
+
+  # ── SwiftAid Backend ───────────────────────────────────
+  backend:
+    build: .                # build from our Dockerfile in current directory
+    container_name: swiftaid-backend
+    restart: unless-stopped
+    ports:
+      - "5000:5000"
+    depends_on:
+      - mongodb             # wait for mongo to start first
+      - redis               # wait for redis to start first
+    environment:
+      NODE_ENV: production
+      PORT: 5000
+      # These use Docker service names as hostnames
+      # Inside Docker network, 'mongodb' resolves to the mongo container
+      MONGO_URI: mongodb://mongodb:27017/swiftaid
+      REDIS_URL: redis://redis:6379
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_EXPIRES_IN: 7d
+    env_file:
+      - .env                # also load from .env file
+
+# ── Named volumes (persist data between container restarts) ──
+volumes:
+  mongo_data:
+  redis_data:

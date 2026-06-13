@@ -53,7 +53,7 @@ useEffect(() => {
   if (socketRef.current) socketRef.current.disconnect();
   if (intervalRef.current) clearInterval(intervalRef.current);
 
-  socketRef.current = io('http://localhost:5000', { auth: { token: `Bearer ${token}` } });
+  socketRef.current = io(process.env.REACT_APP_SOCKET_URL || 'http://localhost:5000', { auth: { token: `Bearer ${token}` } });
 
   socketRef.current.on('connect', () => {
     console.log('Driver socket connected');

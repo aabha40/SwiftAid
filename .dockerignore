@@ -1,0 +1,8 @@
+node_modules
+client
+.env
+.git
+*.log
+logs/
+test-socket.html
+README.md
