@@ -584,24 +584,6 @@ distance = 2R × arcsin(√(sin²(Δlat/2) + cos(lat1) × cos(lat2) × sin²(Δl
 docker-compose up --build
 ```
 
----
-
-## 📸 Screenshots
-
-### Login Page
-> Beautiful split-layout with feature highlights and demo credential quick-fill
-
-### Patient Dashboard
-> Emergency type selector + live Leaflet map + real-time tracking with moving ambulance pin
-
-### Driver Console
-> Online/offline toggle + trip statistics + step-by-step instructions
-
-### Hospital Dashboard
-> Bed capacity bars with colour coding + incoming patient alerts + specialty tags
-
-### Admin Dashboard
-> System stats + fleet status breakdown + hospitals with occupancy bars + user management
 
 ---
 
@@ -646,23 +628,11 @@ docker-compose up --build
 
 ## 👩‍💻 Author
 
-**Aabha Siddharth**
-
-- 🎓 B.E. Computer Engineering, Final Year
-- 💼 Salesforce Futureforce Intern
-- 🔬 CDAC Research — HBase/Hadoop/Phoenix
-- 💻 200+ LeetCode problems solved
-- 📧 aabhasiddharth@email.com
-- 🔗 [LinkedIn](https://linkedin.com/in/aabhasiddharth)
-- 🐙 [GitHub](https://github.com/aabha4O)
+**Aabha Shukla**
 
 ---
 
-## 📄 License
 
-This project is licensed under the MIT License.
-
----
 
 <div align="center">
 
