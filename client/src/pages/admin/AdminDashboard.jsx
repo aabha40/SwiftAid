@@ -8,7 +8,7 @@ export default function AdminDashboard() {
   const [ambulances, setAmbulances] = useState([]);
   const [hospitals, setHospitals] = useState([]);
   const [users, setUsers] = useState([]);
-  const [tab, setTab] = useGlobalTab('overview');
+  const [tab] = useGlobalTab('overview');
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -42,7 +42,7 @@ export default function AdminDashboard() {
 
   if (loading) return <div className="page-loader"><div className="spinner" /></div>;
 
-  const TABS = ['overview', 'fleet', 'hospitals', 'users'];
+  
 
   return (
     <div style={{ display: 'flex', minHeight: '100vh', background: '#0a0e1a' }}>

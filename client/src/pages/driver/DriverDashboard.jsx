@@ -9,7 +9,7 @@ export default function DriverDashboard() {
   const [status, setStatus] = useState('offline');
   const [location, setLocation] = useState({ lat: 21.2514, lng: 81.6296 });
   const [updating, setUpdating] = useState(false);
-  const [stats, setStats] = useState({ trips: 0, distance: 0, avgEta: 0 });
+  
   const socketRef = useRef(null);
 const intervalRef = useRef(null);
 // Cleanup on unmount
