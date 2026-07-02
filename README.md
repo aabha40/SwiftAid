@@ -17,6 +17,7 @@
 ![Redis](https://img.shields.io/badge/Redis-7.x-DC382D?style=flat-square&logo=redis&logoColor=white)
 ![Socket.io](https://img.shields.io/badge/Socket.io-4.x-010101?style=flat-square&logo=socket.io&logoColor=white)
 ![Docker](https://img.shields.io/badge/Docker-Containerised-2496ED?style=flat-square&logo=docker&logoColor=white)
+[![CI](https://github.com/aabha40/SwiftAid/actions/workflows/ci.yml/badge.svg)](https://github.com/aabha40/SwiftAid/actions/workflows/ci.yml)
 
 </div>
 
