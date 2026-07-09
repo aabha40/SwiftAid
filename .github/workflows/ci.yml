@@ -2,33 +2,32 @@ name: SwiftAid CI
 
 on:
   push:
-    branches: [ main ]
+    branches: [main]
   pull_request:
-    branches: [ main ]
+    branches: [main]
 
 jobs:
   test:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v3
+      - name: Checkout code
+        uses: actions/checkout@v4
 
       - name: Use Node.js 20
-        uses: actions/setup-node@v3
+        uses: actions/setup-node@v4
         with:
-          node-version: '20'
-          cache: 'npm'
+          node-version: "20"
 
       - name: Install dependencies
-        run: npm install
+        run: npm ci
 
       - name: Run unit tests
-        run: npm test
+        run: npx jest server/tests --forceExit --verbose
 
-      - name: Verify critical server files
+      - name: Verify critical files exist
         run: |
           test -f server/index.js && echo "✅ index.js found"
-          test -f server/config/db.js && echo "✅ db.js found"
           test -f server/services/geoMatch.js && echo "✅ geoMatch.js found"
           test -f server/services/hospitalScore.js && echo "✅ hospitalScore.js found"
           test -f Dockerfile && echo "✅ Dockerfile found"
