@@ -584,7 +584,21 @@ distance = 2R × arcsin(√(sin²(Δlat/2) + cos(lat1) × cos(lat2) × sin²(Δl
 ```bash
 docker-compose up --build
 ```
+## 📈 Performance
 
+> Load tested with [autocannon](https://github.com/mcollina/autocannon) — 50 concurrent connections, 10 seconds
+
+| Operation | Result |
+|-----------|--------|
+| **Throughput** | 1,190 req/sec average (peak: 1,455 req/sec) |
+| **Avg latency** | 41ms |
+| **P50 latency** | 36ms |
+| **P99 latency** | 163ms |
+| **Total handled** | 12,000 requests in 10 seconds |
+| **Data transferred** | 12.3 MB in 10 seconds |
+| **Concurrent connections** | 50 |
+
+*Tested on local Node.js server. Production Railway deployment may vary.*
 
 ---
 
