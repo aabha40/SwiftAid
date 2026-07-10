@@ -584,6 +584,8 @@ distance = 2R × arcsin(√(sin²(Δlat/2) + cos(lat1) × cos(lat2) × sin²(Δl
 ```bash
 docker-compose up --build
 ```
+---
+
 ## 📈 Performance
 
 > Load tested with [autocannon](https://github.com/mcollina/autocannon) — 50 concurrent connections, 10 seconds
