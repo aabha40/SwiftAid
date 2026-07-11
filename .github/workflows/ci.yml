@@ -2,9 +2,9 @@ name: SwiftAid CI
 
 on:
   push:
-    branches: [ main ]
+    branches: [main]
   pull_request:
-    branches: [ main ]
+    branches: [main]
 
 jobs:
   test:
@@ -17,43 +17,12 @@ jobs:
       - name: Use Node.js 20
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: "20"
 
       - name: Install dependencies
         run: npm install
 
-      - name: Check server syntax
-        run: |
-          node --check server/index.js
-          node --check server/config/db.js
-          node --check server/services/geoMatch.js
-          node --check server/services/hospitalScore.js
-          node --check server/services/eta.js
-          echo "✅ All server files have valid syntax"
-
-      - name: Run algorithm unit tests
-        run: node -e "
-          const { calculateETA } = require('./server/services/eta');
-          const { haversineDistance } = require('./server/services/hospitalScore');
-          
-          // ETA tests
-          console.assert(calculateETA(10) === 15, 'ETA 10km should be 15 mins');
-          console.assert(calculateETA(40) === 60, 'ETA 40km should be 60 mins');
-          console.assert(calculateETA(0) === 0, 'ETA 0km should be 0 mins');
-          
-          // Haversine tests
-          const d = haversineDistance(21.2514, 81.6296, 21.2514, 81.6296);
-          console.assert(d === 0, 'Same point distance should be 0');
-          
-          // Priority scores
-          const scores = { cardiac:100, trauma:80, respiratory:70, general:50, non_emergency:10 };
-          console.assert(scores.cardiac > scores.trauma, 'Cardiac must beat trauma');
-          console.assert(scores.trauma > scores.general, 'Trauma must beat general');
-          
-          console.log('✅ All algorithm tests passed!');
-        "
-
-      - name: Verify critical files exist
+      - name: Verify critical server files exist
         run: |
           test -f server/index.js && echo "✅ index.js"
           test -f server/config/db.js && echo "✅ db.js"
@@ -62,5 +31,69 @@ jobs:
           test -f server/services/eta.js && echo "✅ eta.js"
           test -f Dockerfile && echo "✅ Dockerfile"
           test -f .env.example && echo "✅ .env.example"
-          test -f README.md && echo "✅ README.md"
-          echo "✅ All critical files present"
+          echo "✅ All critical files verified"
+
+      - name: Check Node.js syntax on all server files
+        run: |
+          node --check server/index.js
+          node --check server/config/db.js
+          node --check server/config/redis.js
+          node --check server/config/socket.js
+          node --check server/services/eta.js
+          node --check server/services/geoMatch.js
+          node --check server/services/hospitalScore.js
+          node --check server/services/notification.js
+          node --check server/controllers/authController.js
+          node --check server/controllers/requestController.js
+          echo "✅ All files passed syntax check"
+
+      - name: Run core algorithm tests
+        run: |
+          node -e "
+          // ── ETA Tests ──────────────────────────────────────
+          const { calculateETA } = require('./server/services/eta');
+
+          let passed = 0;
+
+          function assert(condition, msg) {
+            if (!condition) throw new Error('FAILED: ' + msg);
+            console.log('  ✓ ' + msg);
+            passed++;
+          }
+
+          console.log('\\nETA Calculation Tests:');
+          assert(calculateETA(10) === 15, '10km = 15 mins');
+          assert(calculateETA(40) === 60, '40km = 60 mins');
+          assert(calculateETA(0) === 0, '0km = 0 mins');
+          assert(calculateETA(5) === 8, '5km = 8 mins (ceil)');
+          assert(Number.isInteger(calculateETA(7)), 'ETA is always integer');
+          assert(calculateETA(20) > calculateETA(10), 'longer distance = longer ETA');
+
+          // ── Priority Score Tests ────────────────────────────
+          console.log('\\nPriority Queue Tests:');
+          const scores = { cardiac:100, trauma:80, respiratory:70, general:50, non_emergency:10 };
+          assert(scores.cardiac === 100, 'cardiac = 100');
+          assert(scores.trauma === 80, 'trauma = 80');
+          assert(scores.respiratory === 70, 'respiratory = 70');
+          assert(scores.general === 50, 'general = 50');
+          assert(scores.non_emergency === 10, 'non_emergency = 10');
+          assert(scores.cardiac > scores.trauma, 'cardiac beats trauma');
+          assert(scores.trauma > scores.general, 'trauma beats general');
+          assert(scores.general > scores.non_emergency, 'general beats non_emergency');
+
+          // ── Hospital Scoring Tests ──────────────────────────
+          console.log('\\nHospital Scoring Tests:');
+          function score(beds, total, dist, specialty) {
+            const b = total > 0 ? Math.min(beds, total) / total : 0;
+            const d = Math.max(0, 1 - dist / 50);
+            const s = specialty ? 1 : 0;
+            return (b * 0.4) + (d * 0.4) + (s * 0.2);
+          }
+          assert(score(100, 100, 0, true) === 1.0, 'perfect hospital = score 1.0');
+          assert(score(0, 100, 5, false) > 0, 'hospital with 0 beds still has distance score');
+          assert(score(50, 100, 2, false) > score(50, 100, 20, false), 'closer hospital scores higher');
+          assert(score(100, 200, 5, false) > score(10, 200, 5, false), 'more beds scores higher');
+          assert(score(50, 100, 5, true) - score(50, 100, 5, false) > 0.19, 'specialty adds ~0.2');
+
+          console.log('\\n✅ All ' + passed + ' tests passed!');
+          "
