@@ -39,7 +39,10 @@ registerSocketHandlers(io);
 // ── Security middleware ───────────────────────────────────────────
 app.use(helmet());
 app.use(cors({
-  origin: '*',
+  origin: [
+    'http://localhost:3000',
+    'https://swift-aid-pi.vercel.app',
+  ],
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
   allowedHeaders: ['Content-Type', 'Authorization'],
 }));
