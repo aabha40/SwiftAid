@@ -172,3 +172,36 @@ select.input { cursor: pointer; }
 
 .fade-in { animation: fadeIn 0.3s ease-in; }
 @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.2; }
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes moveAmb {
+  0%   { left: 15%; top: 55%; }
+  60%  { left: 50%; top: 55%; }
+  100% { left: 50%; top: 55%; }
+}
+
+@keyframes moveAmb2 {
+  0%   { left: 70%; top: 75%; }
+  70%  { left: 80%; top: 75%; }
+  100% { left: 80%; top: 75%; }
+}
+
+@keyframes routeGrow {
+  0%       { left: 15%; }
+  60%, 100% { left: 50%; }
+}
+
+@keyframes etaMove {
+  0%       { left: 18%; top: 42%; }
+  60%, 100% { left: 52%; top: 42%; }
+}
