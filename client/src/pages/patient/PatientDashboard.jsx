@@ -55,6 +55,7 @@ export default function PatientDashboard() {
   const [ambulancePos, setAmbulancePos] = useState(null);
   const [myRequests, setMyRequests] = useState([]);
   const [eta, setEta] = useState(null);
+  const [firstAid, setFirstAid] = useState(null); // { severityLevel, suspectedCondition, steps }
   const socketRef = useRef(null);
 
   // Get GPS location
@@ -83,6 +84,10 @@ export default function PatientDashboard() {
   socketRef.current.on('ambulance_location', (data) => {
     setAmbulancePos({ lat: data.latitude, lng: data.longitude });
     if (data.etaMinutes) setEta(data.etaMinutes);
+  });
+
+  socketRef.current.on('first_aid_instructions', (data) => {
+    setFirstAid(data);
   });
 
   socketRef.current.on('trip_status_update', (data) => {
@@ -129,6 +134,7 @@ const getLocation = () => new Promise((resolve) => {
   const requestAmbulance = async () => {
     setError('');
     setLoading(true);
+    setFirstAid(null);
     try {
       const loc = await getLocation();
       setLocation(loc);
@@ -138,7 +144,18 @@ const getLocation = () => new Promise((resolve) => {
         latitude: loc.lat,
         description,
       });
-      setActiveRequest({ ...res.data.data, status: 'assigned' });
+      // BUGFIX: this used to hardcode status: 'assigned' regardless of
+      // what actually happened — even a 202 (queued) response was shown
+      // to the patient as if an ambulance had been assigned. Use the
+      // real status the backend returned instead.
+      setActiveRequest({ ...res.data.data, status: res.data.data.status || (res.status === 202 ? 'pending' : 'assigned') });
+      if (res.data.data.aiTriage?.firstAidSteps?.length > 0) {
+        setFirstAid({
+          severityLevel: res.data.data.aiTriage.severityLevel,
+          suspectedCondition: res.data.data.aiTriage.suspectedCondition,
+          steps: res.data.data.aiTriage.firstAidSteps,
+        });
+      }
       setEta(res.data.data.ambulance?.etaMinutes);
       setTab('track');
     } catch (err) {
@@ -147,6 +164,70 @@ const getLocation = () => new Promise((resolve) => {
       setLoading(false);
     }
   };
+
+  // ── Resume an in-progress request on page load ──────────────────
+  // Without this, refreshing the browser (or opening the app fresh
+  // after already having an active request) shows nothing — all the
+  // trip/first-aid state above only lived in memory. This fetches
+  // whatever the patient's actual most recent non-finished request
+  // is and rebuilds the UI from real backend data instead.
+  const TERMINAL_STATUSES = ['completed', 'cancelled', 'failed'];
+
+  useEffect(() => {
+    const resumeActiveRequest = async () => {
+      try {
+        const res = await api.get('/requests/my');
+        const active = res.data.requests?.find((r) => !TERMINAL_STATUSES.includes(r.status));
+        if (!active) return;
+
+        const detail = await api.get(`/requests/${active._id}`);
+        const req = detail.data.request;
+        const trip = detail.data.trip;
+
+        setActiveRequest({
+          requestId: req._id,
+          tripId: trip?.tripId,
+          status: req.status,
+          priorityScore: req.priorityScore,
+          ambulance: req.assignedAmbulanceId
+            ? {
+                vehicleNumber: req.assignedAmbulanceId.vehicleNumber,
+                driver: req.assignedAmbulanceId.driverId
+                  ? { name: req.assignedAmbulanceId.driverId.name, phone: req.assignedAmbulanceId.driverId.phone }
+                  : null,
+                etaMinutes: trip?.etaMinutes,
+              }
+            : null,
+          hospital: req.assignedHospitalId
+            ? {
+                name: req.assignedHospitalId.name,
+                address: req.assignedHospitalId.address,
+                phone: req.assignedHospitalId.phone,
+                availableBeds: req.assignedHospitalId.availableBeds,
+                latitude: req.assignedHospitalId.location?.coordinates?.[1],
+                longitude: req.assignedHospitalId.location?.coordinates?.[0],
+              }
+            : null,
+        });
+
+        if (req.firstAidSteps?.length > 0) {
+          setFirstAid({
+            severityLevel: req.aiSeverityLevel,
+            suspectedCondition: req.aiSuspectedCondition,
+            steps: req.firstAidSteps,
+          });
+        }
+
+        if (trip?.etaMinutes) setEta(trip.etaMinutes);
+        setTab('track');
+      } catch {
+        // No active request, or not logged in yet — nothing to resume
+      }
+    };
+
+    resumeActiveRequest();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const fetchMyRequests = async () => {
     try {
@@ -273,6 +354,23 @@ const getLocation = () => new Promise((resolve) => {
                       </div>
                     ))}
                   </div>
+
+                  {/* AI First-Aid instructions */}
+                  {firstAid?.steps?.length > 0 && (
+                    <div className="card" style={{ border: '1px solid rgba(234,179,8,0.3)', background: 'rgba(234,179,8,0.06)' }}>
+                      <h4 style={{ fontSize: '12px', color: '#eab308', marginBottom: '10px', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                        ⚡ While you wait{firstAid.suspectedCondition ? ` — ${firstAid.suspectedCondition}` : ''}
+                      </h4>
+                      <ul style={{ margin: 0, paddingLeft: '18px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                        {firstAid.steps.map((step, i) => (
+                          <li key={i} style={{ fontSize: '13px', color: '#f1f5f9', lineHeight: 1.4 }}>{step}</li>
+                        ))}
+                      </ul>
+                      <p style={{ fontSize: '10px', color: '#64748b', marginTop: '10px' }}>
+                        AI-generated guidance — not a substitute for professional medical advice.
+                      </p>
+                    </div>
+                  )}
 
                   {/* Ambulance info */}
                   {activeRequest.ambulance && (
