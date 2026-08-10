@@ -10,6 +10,7 @@ const Trip = require('../models/Trip');
 const User = require('../models/User');
 const { findNearestAmbulance, releaseAmbulance } = require('../services/geoMatch');
 const { classifyEmergency } = require('../services/aiTriage');
+const { getIO } = require('../config/socket');
 const { assignAmbulanceToRequest } = require('../services/dispatch');
 const auditLogger = require('../services/auditLogger');
 const { REQUEST_STATUS, AMBULANCE_STATUS } = require('../utils/constants');
@@ -244,8 +245,12 @@ const getRequestById = async (req, res, next) => {
   try {
     const request = await EmergencyRequest.findById(req.params.id)
       .populate('patientId', 'name phone')
-      .populate('assignedAmbulanceId', 'vehicleNumber status location')
-      .populate('assignedHospitalId', 'name address phone availableBeds');
+      .populate({
+        path: 'assignedAmbulanceId',
+        select: 'vehicleNumber status location driverId',
+        populate: { path: 'driverId', select: 'name phone' },
+      })
+      .populate('assignedHospitalId', 'name address phone availableBeds location');
 
     if (!request) {
       return res.status(404).json({
@@ -254,9 +259,15 @@ const getRequestById = async (req, res, next) => {
       });
     }
 
+    // Look up the associated Trip for tripId/ETA — needed by the frontend
+    // to join the correct Socket.io room and show live tracking after a
+    // page refresh (this data isn't stored directly on EmergencyRequest).
+    const trip = await Trip.findOne({ requestId: request._id }).select('_id estimatedArrivalMinutes');
+
     res.status(200).json({
       success: true,
       request,
+      trip: trip ? { tripId: trip._id, etaMinutes: trip.estimatedArrivalMinutes } : null,
     });
   } catch (error) {
     next(error);
@@ -322,6 +333,19 @@ const updateRequestStatus = async (req, res, next) => {
     // ── Update request status ─────────────────────────────────────
     request.status = status;
     await request.save();
+
+    // ── Push the status change live to the patient ────────────────
+    // The patient's dashboard already listens for this event on the
+    // trip's Socket.io room — without this emit, they'd only see the
+    // new status on a manual refresh.
+    const trip = await Trip.findOne({ requestId }).select('_id');
+    if (trip) {
+      try {
+        getIO().to(trip._id.toString()).emit('trip_status_update', { status });
+      } catch (socketError) {
+        console.error(`⚠️  Could not emit trip_status_update: ${socketError.message}`);
+      }
+    }
 
     // ── Update trip timeline timestamp ────────────────────────────
     const timelineField = {
