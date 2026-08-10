@@ -510,9 +510,9 @@ docker-compose up --build
 ## 👩‍💻 Author
 
 **Aabha Shukla**
-- 🎓 B.Tech CS-AI, Banasthali Vidyapith (CGPA: 9.20, graduating May 2026)
-- 💼 Salesforce Futureforce Intern
-- 🔬 CDAC Research Intern — HBase/Hadoop/Phoenix
+- 🎓 B.Tech CS-AI, Banasthali Vidyapith (CGPA: 9.18)
+- 💼 Salesforce Intern
+- 🔬 CDAC Research Intern 
 - 💻 200+ LeetCode problems
 - 📧 aabhashukla7534@gmail.com
 - 🔗 [LinkedIn](https://linkedin.com/in/aabha-shukla)
