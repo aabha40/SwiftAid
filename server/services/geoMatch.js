@@ -101,6 +101,21 @@ const findNearestAmbulance = async (lng, lat) => {
 // Tries GEOSEARCH (Redis 6.2+) first
 // Falls back to GEORADIUS (older Redis / Memurai) if needed
 const runGeoSearch = async (lng, lat, radius) => {
+  // Defensive check: if the connection somehow ended (shouldn't happen
+  // with the retryStrategy in config/redis.js, but Render's spin-down/
+  // spin-up cycle is exactly the kind of edge case worth guarding),
+  // force a reconnect and wait for it before running the query instead
+  // of failing this request outright.
+  if (redis.status === "end" || redis.status === "close") {
+    console.warn(`⚠️  Redis status is '${redis.status}' — reconnecting before geo search...`);
+    try {
+      await redis.connect();
+    } catch (reconnectError) {
+      console.error(`❌ Redis reconnect failed: ${reconnectError.message}`);
+      return [];
+    }
+  }
+
   try {
     // GEOSEARCH — modern Redis 6.2+ command
     const results = await redis.call(
