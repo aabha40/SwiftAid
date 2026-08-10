@@ -198,6 +198,14 @@ const updateStatus = async (req, res, next) => {
         ambulance._id.toString()
       );
       console.log(`📍 Ambulance ${ambulance.vehicleNumber} added to geo pool`);
+
+      // ── Check the priority queue before this ambulance sits idle ──
+      // Covers the case where a driver comes online (shift start,
+      // reconnect) while patients are already waiting nearby.
+      const { tryDispatchQueuedRequest } = require('../services/dispatch');
+      tryDispatchQueuedRequest(ambulance._id).catch((err) =>
+        console.error(`❌ tryDispatchQueuedRequest failed: ${err.message}`)
+      );
     }
 
     if (status === AMBULANCE_STATUS.OFFLINE) {

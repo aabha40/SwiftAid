@@ -36,6 +36,13 @@ const emergencyRequestSchema = new mongoose.Schema(
     },
     assignmentAttempts: { type: Number, default: 0 },
     description: { type: String, maxlength: 500, default: '' },
+
+    // ── AI Triage fields ─────────────────────────────────────────
+    aiSeverityLevel: { type: String, default: null }, // critical | high | moderate | low | unknown
+    aiSuspectedCondition: { type: String, default: null },
+    aiReasoning: { type: String, default: '' },
+    firstAidSteps: { type: [String], default: [] },
+    aiTriageSource: { type: String, enum: ['ai', 'fallback', null], default: null },
   },
   { timestamps: true }
 );

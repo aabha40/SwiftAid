@@ -9,15 +9,10 @@ const Hospital = require('../models/Hospital');
 const Trip = require('../models/Trip');
 const User = require('../models/User');
 const { findNearestAmbulance, releaseAmbulance } = require('../services/geoMatch');
-const { findBestHospital } = require('../services/hospitalScore');
-const { calculateETA } = require('../services/eta');
+const { classifyEmergency } = require('../services/aiTriage');
+const { assignAmbulanceToRequest } = require('../services/dispatch');
 const auditLogger = require('../services/auditLogger');
 const { REQUEST_STATUS, AMBULANCE_STATUS } = require('../utils/constants');
-const {
-  notifyPatientAmbulanceAssigned,
-  notifyDriverNewRequest,
-  notifyHospitalIncomingPatient,
-} = require('../services/notification');
 
 // ─────────────────────────────────────────────────────────────────
 // POST /api/requests
@@ -66,9 +61,15 @@ const createRequest = async (req, res, next) => {
       });
     }
 
-    // ── STEP 1: Create the emergency request in MongoDB ───────────
+    // ── STEP 1: AI triage — classify severity from description ────
+    // Has its own 3s timeout + fallback to static PRIORITY_SCORES,
+    // so this can never hang or fail the request flow.
+    const triage = await classifyEmergency(description, emergencyType);
+
+    // ── STEP 2: Create the emergency request in MongoDB ───────────
     // Status starts as PENDING
-    // priorityScore is auto-set by the pre-save hook in EmergencyRequest model
+    // priorityScore is auto-set by the pre-save hook, then overridden
+    // by the AI triage score (or left as-is if triage fell back).
     const emergencyRequest = await EmergencyRequest.create({
       patientId: req.user._id,
       pickupLocation: {
@@ -78,9 +79,15 @@ const createRequest = async (req, res, next) => {
       emergencyType,
       description: description || '',
       status: REQUEST_STATUS.PENDING,
+      priorityScore: triage.priorityScore,
+      aiSeverityLevel: triage.severityLevel,
+      aiSuspectedCondition: triage.suspectedCondition,
+      aiReasoning: triage.reasoning,
+      firstAidSteps: triage.firstAidSteps,
+      aiTriageSource: triage.source,
     });
 
-    console.log(`\n🚨 Emergency: ${emergencyRequest._id} | ${emergencyType.toUpperCase()} | Priority: ${emergencyRequest.priorityScore}`);
+    console.log(`\n🚨 Emergency: ${emergencyRequest._id} | ${emergencyType.toUpperCase()} | Priority: ${emergencyRequest.priorityScore} | AI severity: ${triage.severityLevel} (${triage.source})`);
 
     await auditLogger.log({
       actorId: req.user._id,
@@ -96,118 +103,53 @@ const createRequest = async (req, res, next) => {
     const matchResult = await findNearestAmbulance(lng, lat);
 
     if (!matchResult) {
-      // No ambulance found — mark request as failed
-      emergencyRequest.status = REQUEST_STATUS.FAILED;
-      await emergencyRequest.save();
+      // No ambulance available RIGHT NOW — request stays PENDING
+      // and un-assigned, which makes it a "queued" request. It will
+      // automatically be picked up by tryDispatchQueuedRequest()
+      // the moment any ambulance becomes available, ordered by
+      // priorityScore (AI-refined severity first, then wait time).
+      //
+      // IMPORTANT: we still tell the patient to call 108. A software
+      // queue is a best-effort improvement, not a substitute for the
+      // real emergency line — never let the UI imply otherwise.
+      console.log(`⏳ No ambulance available — request ${emergencyRequest._id} queued at priority ${emergencyRequest.priorityScore}`);
 
-      return res.status(503).json({
-        success: false,
-        message: 'No ambulances available right now. Please call 108 immediately.',
-        requestId: emergencyRequest._id,
+      return res.status(202).json({
+        success: true,
+        queued: true,
+        message: 'No ambulance available immediately. You have been placed in the priority queue and will be matched as soon as one is free. If this is life-threatening, please also call 108 now.',
+        data: {
+          requestId: emergencyRequest._id,
+          priorityScore: emergencyRequest.priorityScore,
+          aiTriage: {
+            severityLevel: triage.severityLevel,
+            suspectedCondition: triage.suspectedCondition,
+            firstAidSteps: triage.firstAidSteps,
+            source: triage.source,
+          },
+        },
       });
     }
 
     const { ambulance, distanceKm } = matchResult;
     claimedAmbulanceId = ambulance._id.toString(); // track for cleanup on error
 
-    // ── STEP 3: Find best hospital ────────────────────────────────
-    const hospitalResult = await findBestHospital(lng, lat, emergencyType);
+    // ── STEP 3: Mark ambulance BUSY, then run the shared assignment ─
+    // flow (hospital match, ETA, Trip creation, notifications, and
+    // pushing first-aid instructions over Socket.io). This is the
+    // exact same function tryDispatchQueuedRequest() uses when a
+    // freed-up ambulance is matched to a WAITING patient instead —
+    // one code path, so the two flows can never drift apart.
+    await Ambulance.findByIdAndUpdate(ambulance._id, { status: AMBULANCE_STATUS.BUSY });
 
-    // ── STEP 4: Update ambulance status to BUSY ───────────────────
-    await Ambulance.findByIdAndUpdate(ambulance._id, {
-      status: AMBULANCE_STATUS.BUSY,
-    });
+    const { trip, hospitalResult, etaMinutes } = await assignAmbulanceToRequest(
+      emergencyRequest,
+      ambulance,
+      distanceKm,
+      triage
+    );
 
-    // ── STEP 5: Calculate ETA ─────────────────────────────────────
-    const etaMinutes = calculateETA(distanceKm);
-
-    // ── STEP 6: Update the emergency request ─────────────────────
-    emergencyRequest.status = REQUEST_STATUS.ASSIGNED;
-    emergencyRequest.assignedAmbulanceId = ambulance._id;
-    emergencyRequest.assignedHospitalId = hospitalResult?.hospital?._id || null;
-    emergencyRequest.assignmentAttempts += 1;
-    await emergencyRequest.save();
-
-    // ── STEP 7: Create a Trip record ──────────────────────────────
-    const trip = await Trip.create({
-      requestId: emergencyRequest._id,
-      ambulanceId: ambulance._id,
-      patientId: req.user._id,
-      hospitalId: hospitalResult?.hospital?._id || null,
-      estimatedArrivalMinutes: etaMinutes,
-      distanceKm: parseFloat(distanceKm.toFixed(2)),
-      timeline: {
-        requestedAt: emergencyRequest.createdAt,
-        assignedAt: new Date(),
-      },
-    });
-
-    // Link trip to ambulance
-    await Ambulance.findByIdAndUpdate(ambulance._id, {
-      currentTripId: trip._id,
-    });
-
-    // ── STEP 8: Decrement hospital bed count ──────────────────────
-    // One bed is now reserved for this incoming patient
-    if (hospitalResult?.hospital?._id) {
-      await Hospital.findByIdAndUpdate(hospitalResult.hospital._id, {
-        $inc: {
-          availableBeds: -1,
-          'emergencyCapacity.available': -1,
-        },
-      });
-      console.log(`🏥 Hospital bed reserved at ${hospitalResult.hospital.name}`);
-    }
-
-    await auditLogger.log({
-      actorId: req.user._id,
-      actorRole: 'patient',
-      action: 'AMBULANCE_ASSIGNED',
-      resourceId: emergencyRequest._id,
-      resourceType: 'EmergencyRequest',
-      details: {
-        ambulanceId: ambulance._id,
-        vehicleNumber: ambulance.vehicleNumber,
-        distanceKm: parseFloat(distanceKm.toFixed(2)),
-        etaMinutes,
-        hospitalName: hospitalResult?.hospital?.name || 'None found',
-      },
-      ipAddress: req.ip,
-    });
-
-    console.log(`✅ Assigned: ${ambulance.vehicleNumber} → Patient | ${distanceKm.toFixed(2)}km | ETA: ${etaMinutes} mins`);
-
-    // ── STEP 9: Send push notifications ──────────────────────────
-    // Notify patient — ambulance is coming
-    await notifyPatientAmbulanceAssigned(req.user.fcmToken, {
-      vehicleNumber: ambulance.vehicleNumber,
-      etaMinutes,
-      driverName: ambulance.driverId?.name || 'Driver',
-      tripId: trip._id.toString(),
-    });
-
-    // Notify driver — new request nearby
-    if (ambulance.driverId?.fcmToken) {
-      await notifyDriverNewRequest(ambulance.driverId.fcmToken, {
-        requestId: emergencyRequest._id.toString(),
-        emergencyType,
-        distanceKm: parseFloat(distanceKm.toFixed(2)),
-      });
-    }
-
-    // Notify hospital admin — patient is incoming
-    if (hospitalResult?.hospital?.adminId) {
-      const hospitalAdmin = await User.findById(hospitalResult.hospital.adminId);
-      if (hospitalAdmin?.fcmToken) {
-        await notifyHospitalIncomingPatient(hospitalAdmin.fcmToken, {
-          emergencyType,
-          etaMinutes,
-          tripId: trip._id.toString(),
-        });
-      }
-    }
-
-    // ── STEP 10: Send response to patient ─────────────────────────
+    // ── Send response to patient ────────────────────────────────────
     claimedAmbulanceId = null; // assignment successful — no cleanup needed
 
     res.status(201).json({
@@ -218,6 +160,12 @@ const createRequest = async (req, res, next) => {
         tripId: trip._id,
         status: REQUEST_STATUS.ASSIGNED,
         priorityScore: emergencyRequest.priorityScore,
+        aiTriage: {
+          severityLevel: triage.severityLevel,
+          suspectedCondition: triage.suspectedCondition,
+          firstAidSteps: triage.firstAidSteps,
+          source: triage.source, // 'ai' or 'fallback' — useful to show in demo
+        },
         ambulance: {
           id: ambulance._id,
           vehicleNumber: ambulance.vehicleNumber,
@@ -232,18 +180,17 @@ const createRequest = async (req, res, next) => {
             : null,
         },
         hospital: hospitalResult
-  ? {
-      id: hospitalResult.hospital._id,
-      name: hospitalResult.hospital.name,
-      address: hospitalResult.hospital.address,
-      phone: hospitalResult.hospital.phone,
-      distanceKm: parseFloat(hospitalResult.distKm.toFixed(2)),
-      availableBeds: hospitalResult.hospital.availableBeds,
-      // Include coordinates for frontend map pin
-      latitude: hospitalResult.hospital.location.coordinates[1],
-      longitude: hospitalResult.hospital.location.coordinates[0],
-    }
-  : null,
+          ? {
+              id: hospitalResult.hospital._id,
+              name: hospitalResult.hospital.name,
+              address: hospitalResult.hospital.address,
+              phone: hospitalResult.hospital.phone,
+              distanceKm: parseFloat(hospitalResult.distKm.toFixed(2)),
+              availableBeds: hospitalResult.hospital.availableBeds,
+              latitude: hospitalResult.hospital.location.coordinates[1],
+              longitude: hospitalResult.hospital.location.coordinates[0],
+            }
+          : null,
       },
     });
 
@@ -409,6 +356,15 @@ const updateRequestStatus = async (req, res, next) => {
         );
 
         console.log(`🟢 Ambulance ${ambulance.vehicleNumber} is available again`);
+
+        // ── Check the priority queue before this ambulance sits idle ──
+        // If a patient is waiting nearby, tryDispatchQueuedRequest()
+        // re-claims it and assigns it to the highest-priority one.
+        // If nobody's waiting, it's a no-op and stays available normally.
+        const { tryDispatchQueuedRequest } = require('../services/dispatch');
+        tryDispatchQueuedRequest(ambulance._id).catch((err) =>
+          console.error(`❌ tryDispatchQueuedRequest failed: ${err.message}`)
+        );
       }
 
       // Restore hospital bed — patient has been delivered
