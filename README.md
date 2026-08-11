@@ -561,7 +561,6 @@ docker-compose up --build
 - 🎓 B.Tech CS-AI, Banasthali Vidyapith (CGPA: 9.18)
 - 💼 Salesforce Intern
 - 🔬 CDAC Research Intern 
-- 💻 200+ LeetCode problems
 - 📧 aabhashukla7534@gmail.com
 - 🔗 [LinkedIn](https://linkedin.com/in/aabha-shukla)
 - 🐙 [GitHub](https://github.com/aabha40)
