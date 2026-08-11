@@ -28,21 +28,14 @@
 - [Solution](#-solution)
 - [Live Demo](#-live-demo)
 - [Key Features](#-key-features)
-- [System Architecture](#-system-architecture)
 - [Tech Stack](#-tech-stack)
-- [Data Models](#-data-models)
-- [API Reference](#-api-reference)
-- [Real-time Events](#-real-time-events)
 - [Getting Started](#-getting-started)
 - [Docker Setup](#-docker-setup)
 - [Project Structure](#-project-structure)
 - [User Roles](#-user-roles)
-- [Algorithms](#-algorithms)
 - [Performance](#-performance)
 - [Testing](#-testing)
-- [Architecture Decisions](#-architecture-decisions)
 - [Deployment](#-deployment)
-- [Security Features](#-security-features)
 - [What Makes SwiftAid Different](#-what-makes-swiftaid-different)
 - [Author](#-author)
 
@@ -157,36 +150,6 @@ Non-emergency→ Score ~10   ← served last
 
 ---
 
-## 🏗️ System Architecture
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                        CLIENT LAYER                          │
-│  React (Patient) │ React (Driver) │ React (Hospital) │ Admin │
-└──────────────────────────┬──────────────────────────────────┘
-                           │ HTTP / WebSocket
-┌──────────────────────────▼──────────────────────────────────┐
-│                      GATEWAY LAYER                           │
-│     Express.js │ JWT Auth │ Rate Limiter │ RBAC              │
-└──────────────────────────┬──────────────────────────────────┘
-                           │
-┌──────────────────────────▼──────────────────────────────────┐
-│                     CORE SERVICES                            │
-│  Request Service  │  Geo-Match  │  Hospital Scorer  │  Auth  │
-│  Tracking Service │  ETA Calc   │  Notification     │  Audit │
-└──────────┬────────────────────────────────────┬─────────────┘
-           │                                    │
-┌──────────▼──────────┐              ┌──────────▼──────────────┐
-│   MONGODB ATLAS      │              │    UPSTASH REDIS         │
-│  Users, Trips       │              │  Geo pool (ambulances)   │
-│  Hospitals          │              │  Priority queue          │
-│  Emergency Requests │              │  Heartbeat TTLs          │
-│  Audit Logs         │              │  Rate limit counters     │
-└─────────────────────┘              └─────────────────────────┘
-```
-
----
-
 ## 🛠️ Tech Stack
 
 ### Backend
@@ -219,119 +182,6 @@ Non-emergency→ Score ~10   ← served last
 | **MongoDB Atlas** | Cloud database (free tier) |
 | **Upstash Redis** | Cloud Redis (free tier, Mumbai) |
 | **GitHub Actions** | CI pipeline (32s, runs on every push) |
-
----
-
-## 📊 Data Models
-
-### User
-```javascript
-{
-  name, email (unique), phone (unique),
-  password (bcrypt 12 rounds),
-  role: ['patient', 'driver', 'hospital_admin', 'super_admin'],
-  ambulanceId, hospitalId, fcmToken, isActive
-}
-```
-
-### Ambulance
-```javascript
-{
-  vehicleNumber (unique), driverId,
-  status: ['available', 'busy', 'offline'],
-  location: GeoJSON Point,
-  ambulanceType: ['basic', 'advanced', 'cardiac', 'neonatal'],
-  currentTripId, totalTripsCompleted, lastActiveAt
-}
-```
-
-### Hospital
-```javascript
-{
-  name, registrationNumber, location: GeoJSON Point,
-  address, totalBeds, availableBeds,
-  emergencyCapacity: { total, available },
-  specialties: ['cardiology', 'trauma', 'general', ...],
-  isAcceptingEmergencies, adminId
-}
-```
-
-### EmergencyRequest
-```javascript
-{
-  patientId, pickupLocation: GeoJSON Point,
-  emergencyType: ['cardiac', 'trauma', 'respiratory', 'general', 'non_emergency'],
-  priorityScore (AI-refined, falls back to static per-category score),
-  status: ['pending', 'assigned', 'accepted', 'en_route', 'arrived', 'hospital_bound', 'completed', 'failed'],
-  assignedAmbulanceId, assignedHospitalId, assignmentAttempts,
-  // AI triage
-  aiSeverityLevel, aiSuspectedCondition, aiReasoning,
-  firstAidSteps: [String],
-  aiTriageSource: ['ai', 'fallback']
-}
-```
-
----
-
-## 📡 API Reference
-
-### Authentication
-| Method | Endpoint | Access | Description |
-|--------|----------|--------|-------------|
-| POST | `/api/auth/register` | Public | Register new user |
-| POST | `/api/auth/login` | Public | Login, returns JWT |
-| GET | `/api/auth/me` | Protected | Get current user |
-
-### Emergency Requests
-| Method | Endpoint | Access | Description |
-|--------|----------|--------|-------------|
-| POST | `/api/requests` | Patient | Submit emergency (rate limited: 5/min) |
-| GET | `/api/requests/my` | Patient | Get my requests |
-| GET | `/api/requests/:id` | All | Get request details |
-| PATCH | `/api/requests/:id/status` | Driver | Advance trip status |
-
-### Ambulances
-| Method | Endpoint | Access | Description |
-|--------|----------|--------|-------------|
-| POST | `/api/ambulances` | Super Admin | Add to fleet |
-| GET | `/api/ambulances/my` | Driver | Get my ambulance |
-| PATCH | `/api/ambulances/status` | Driver | Go online/offline |
-| PATCH | `/api/ambulances/:id/assign-driver` | Super Admin | Assign driver |
-
-### Hospitals
-| Method | Endpoint | Access | Description |
-|--------|----------|--------|-------------|
-| POST | `/api/hospitals` | Super Admin | Register hospital |
-| GET | `/api/hospitals/my` | Hospital Admin | Get my hospital |
-| PATCH | `/api/hospitals/beds` | Hospital Admin | Update bed count |
-| PATCH | `/api/hospitals/toggle-emergency` | Hospital Admin | Toggle acceptance |
-
-### Admin
-| Method | Endpoint | Access | Description |
-|--------|----------|--------|-------------|
-| GET | `/api/admin/stats` | Super Admin | System statistics |
-| GET | `/api/admin/users` | Super Admin | All users |
-| GET | `/api/admin/ambulances` | Super Admin | All ambulances |
-| GET | `/api/admin/hospitals` | Super Admin | All hospitals |
-
----
-
-## 📡 Real-Time Events (Socket.io)
-
-### Client → Server
-| Event | Payload | Description |
-|-------|---------|-------------|
-| `join_trip` | `{ tripId }` | Join trip room |
-| `location_update` | `{ tripId, ambulanceId, lng, lat }` | Driver GPS (every 3s) |
-| `status_update` | `{ tripId, requestId, status }` | Driver status change |
-| `heartbeat` | `{ ambulanceId }` | Keep-alive every 30s |
-
-### Server → Client
-| Event | Payload | Description |
-|-------|---------|-------------|
-| `ambulance_location` | `{ lng, lat, etaMinutes }` | Live location broadcast |
-| `trip_status_update` | `{ status, message }` | Status notification |
-| `heartbeat_ack` | `{ timestamp }` | Heartbeat confirmed |
 
 ---
 
@@ -405,56 +255,6 @@ SwiftAid/
 
 ---
 
-## 🧮 Algorithms
-
-### Geo-Matching
-```
-1. GEORADIUS search within 10km
-2. For each result (nearest first):
-   → SET lock:ambulance:ID NX EX 30
-   → If OK → claimed atomically
-   → If null → try next nearest
-3. Expand to 20km, then 50km if empty
-4. If still none found → request stays PENDING (queued), not FAILED
-```
-
-### AI Triage
-```
-1. Patient submits free-text description + emergency type
-2. classifyEmergency() calls Groq (Llama 3.1) with a 3s hard timeout
-3. On success → { severityLevel, priorityScore, suspectedCondition, firstAidSteps }
-4. On timeout / error / missing API key → falls back to static
-   per-category score, source flagged as 'fallback' for transparency
-5. priorityScore drives both immediate dispatch AND the priority queue below
-```
-
-### Priority Queue Drain
-```
-1. Ambulance becomes AVAILABLE (trip completed, or driver comes online)
-2. Atomically claim it: findOneAndUpdate({status: AVAILABLE} → {status: BUSY})
-3. Query EmergencyRequests within radius using $geoWithin/$centerSphere
-   on the existing pickupLocation index, WHERE status=PENDING
-4. Sort candidates by priorityScore desc, then createdAt asc (tiebreak)
-5. Assign to the highest-priority match — or release the ambulance
-   back to the pool if nobody's waiting nearby
-```
-
-### Hospital Scoring
-```
-bedScore      = availableBeds / totalBeds         (40%)
-distanceScore = 1 - (distanceKm / 50)             (40%)
-specialtyScore = 1 if specialty matches, else 0   (20%)
-finalScore = (bed × 0.4) + (dist × 0.4) + (spec × 0.2)
-```
-
-### Haversine Distance
-```
-d = 2R × arcsin(√(sin²(Δlat/2) + cos(lat1)·cos(lat2)·sin²(Δlng/2)))
-R = 6371 km
-```
-
----
-
 ## 📈 Performance
 
 > Load tested with autocannon — 50 concurrent connections, 10 seconds
@@ -496,21 +296,6 @@ CI runs on every push to `main` — syntax check + algorithm tests in 32 seconds
 
 ---
 
-## 📐 Architecture Decisions
-
-Full reasoning in [`docs/decisions.md`](docs/decisions.md):
-
-| ADR | Decision | Why |
-|-----|----------|-----|
-| ADR-001 | Redis for geo-matching | <5ms vs 50ms MongoDB |
-| ADR-002 | Socket.io over raw WS | Rooms, auto-reconnect, fallback |
-| ADR-003 | JWT over sessions | Stateless, scales horizontally |
-| ADR-004 | MongoDB over PostgreSQL | Native GeoJSON, flexible schema |
-| ADR-005 | Node.js over Java/Python | Non-blocking I/O for concurrent GPS pings |
-| ADR-006 | Docker Compose | One-command local stack |
-
----
-
 ## 🚀 Deployment
 
 | Layer | Platform | URL |
@@ -543,24 +328,13 @@ docker-compose up --build
 
 ---
 
-## 🛡️ Security
-
-- JWT (7-day expiry) + bcrypt (12 rounds)
-- Rate limiting: 5 emergency/min, 10 login/15min
-- RBAC: 4 roles, strict endpoint access
-- Coordinate validation + emergency type whitelist
-- Audit log: every action with actor + IP + timestamp
-- Helmet.js security headers
-- CORS: production domains only
-
----
-
 ## 👩‍💻 Author
 
 **Aabha Shukla**
 - 🎓 B.Tech CS-AI, Banasthali Vidyapith (CGPA: 9.18)
 - 💼 Salesforce Intern
 - 🔬 CDAC Research Intern 
+- 💻 200+ LeetCode problems
 - 📧 aabhashukla7534@gmail.com
 - 🔗 [LinkedIn](https://linkedin.com/in/aabha-shukla)
 - 🐙 [GitHub](https://github.com/aabha40)
