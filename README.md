@@ -122,20 +122,38 @@ Score = (availableBeds/totalBeds × 0.4) + (distanceScore × 0.4) + (specialtyMa
 - Bed count **auto-decrements** on assignment, **restores** on trip completion
 - Specialty matching (cardiac → cardiology, trauma → trauma unit)
 
-### 🚨 4. Priority-Based Dispatch
+### 🤖 4. AI-Powered Triage
+- Patient describes their emergency in plain words — an LLM (Groq/Llama) reads it and returns a structured severity classification in real time
+- Replaces the old flat per-category score with a genuinely dynamic one: two "cardiac" requests can score very differently depending on what's actually described
+- Generates 2–4 layperson-actionable **first-aid steps**, pushed to the patient live over Socket.io the moment an ambulance is assigned
+- **Hard 3-second timeout + automatic fallback** to the static category score if the AI call is slow, errors, or the API key is unset — dispatch can never hang or fail because of the AI layer
 ```
-Cardiac      → Score 100  ← served first
-Trauma       → Score 80
-Respiratory  → Score 70
-General      → Score 50
-Non-emergency→ Score 10   ← served last
+Patient describes: "chest pain, sweating, can't breathe"
+→ severityLevel: critical | priorityScore: 96 | suspectedCondition: possible cardiac arrest
+→ firstAidSteps: ["Sit upright", "Loosen tight clothing", "Do not let them walk"]
 ```
 
-### 🔒 5. Security & Reliability
+### 🚨 5. Priority Queue Dispatch
+```
+Cardiac      → Score ~100  ← served first
+Trauma       → Score ~80
+Respiratory  → Score ~70
+General      → Score ~50
+Non-emergency→ Score ~10   ← served last
+```
+(Base scores above; the AI triage layer refines these per-request based on the actual description.)
+
+- When no ambulance is immediately available, the request isn't dropped — it stays queued, ranked by priority score
+- The moment **any** ambulance frees up (trip completed, or a driver comes back online), the system automatically checks nearby waiting requests and dispatches to the **highest-priority** one — not just whoever asks next
+- Uses MongoDB's `$geoWithin`/`$centerSphere` on the existing geospatial index to find waiting patients near the newly-freed ambulance, ranked by priority score then wait time
+- Patients are still shown a safety fallback message ("please also call 108") — a software queue is a best-effort improvement, never a substitute for the real emergency line
+
+### 🔒 6. Security & Reliability
 - JWT auth + 4-role RBAC (patient / driver / hospital_admin / super_admin)
 - Rate limiting: 5 emergency requests/minute, 10 login attempts/15 minutes
 - Audit logging: every action logged with actor, IP, timestamp
 - Error boundary: React crashes show friendly error screen
+- Self-healing Redis reconnection — survives host-provider idle spin-downs without requiring a manual server restart
 
 ---
 
@@ -181,6 +199,7 @@ Non-emergency→ Score 10   ← served last
 | **JWT** | Authentication | Stateless, mobile-friendly |
 | **bcryptjs** | Password hashing | 12 salt rounds |
 | **Firebase Admin** | Push notifications | Reaches offline devices |
+| **Groq (Llama 3.1)** | AI emergency triage | Free tier, fast inference — well under the 3s dispatch timeout budget |
 
 ### Frontend
 | Technology | Purpose |
@@ -242,9 +261,13 @@ Non-emergency→ Score 10   ← served last
 {
   patientId, pickupLocation: GeoJSON Point,
   emergencyType: ['cardiac', 'trauma', 'respiratory', 'general', 'non_emergency'],
-  priorityScore (auto-calculated),
-  status: ['pending', 'assigned', 'accepted', 'en_route', 'arrived', 'completed', 'failed'],
-  assignedAmbulanceId, assignedHospitalId, assignmentAttempts
+  priorityScore (AI-refined, falls back to static per-category score),
+  status: ['pending', 'assigned', 'accepted', 'en_route', 'arrived', 'hospital_bound', 'completed', 'failed'],
+  assignedAmbulanceId, assignedHospitalId, assignmentAttempts,
+  // AI triage
+  aiSeverityLevel, aiSuspectedCondition, aiReasoning,
+  firstAidSteps: [String],
+  aiTriageSource: ['ai', 'fallback']
 }
 ```
 
@@ -326,6 +349,8 @@ npm install
 npm start                 # frontend at localhost:3000
 ```
 
+> **Note:** `GROQ_API_KEY` is required for AI-powered triage (free tier — get one at [console.groq.com](https://console.groq.com)). Without it, requests still work normally, just with the static per-category priority score instead of AI-refined severity.
+
 ---
 
 ## 🐳 Docker Setup
@@ -348,7 +373,8 @@ SwiftAid/
 │   ├── middleware/     # auth, rbac, rateLimiter, errorHandler
 │   ├── models/         # User, Ambulance, Hospital, EmergencyRequest, Trip, AuditLog
 │   ├── routes/         # Express routers
-│   ├── services/       # geoMatch, hospitalScore, eta, notification, auditLogger
+│   ├── services/       # geoMatch, hospitalScore, eta, notification, auditLogger, aiTriage, dispatch
+│   ├── scripts/        # seedDemo.js, runDemo.js — local test data + automated smoke test
 │   ├── socket/         # locationHandler, statusHandler, heartbeatHandler
 │   ├── tests/          # algorithms.test.js (20 unit tests)
 │   └── utils/          # constants
@@ -389,7 +415,28 @@ SwiftAid/
    → If OK → claimed atomically
    → If null → try next nearest
 3. Expand to 20km, then 50km if empty
-4. Mark request FAILED if none found
+4. If still none found → request stays PENDING (queued), not FAILED
+```
+
+### AI Triage
+```
+1. Patient submits free-text description + emergency type
+2. classifyEmergency() calls Groq (Llama 3.1) with a 3s hard timeout
+3. On success → { severityLevel, priorityScore, suspectedCondition, firstAidSteps }
+4. On timeout / error / missing API key → falls back to static
+   per-category score, source flagged as 'fallback' for transparency
+5. priorityScore drives both immediate dispatch AND the priority queue below
+```
+
+### Priority Queue Drain
+```
+1. Ambulance becomes AVAILABLE (trip completed, or driver comes online)
+2. Atomically claim it: findOneAndUpdate({status: AVAILABLE} → {status: BUSY})
+3. Query EmergencyRequests within radius using $geoWithin/$centerSphere
+   on the existing pickupLocation index, WHERE status=PENDING
+4. Sort candidates by priorityScore desc, then createdAt asc (tiebreak)
+5. Assign to the highest-priority match — or release the ambulance
+   back to the pool if nobody's waiting nearby
 ```
 
 ### Hospital Scoring
@@ -488,7 +535,8 @@ docker-compose up --build
 | Ambulance matching | Manual dispatcher | Redis geo in <5ms |
 | Hospital selection | Nearest | Weighted score (beds+dist+specialty) |
 | Patient tracking | Phone calls | Live WebSocket map |
-| Priority handling | First-come | Priority queue (cardiac first) |
+| Severity assessment | Verbal, dispatcher judgement | AI-classified from patient's own description |
+| Priority handling | First-come | Dynamic priority queue — auto-dispatches to highest-severity waiting patient the instant an ambulance frees up |
 | Driver offline | Manual follow-up | Auto-reassign in 30s |
 | Concurrent safety | None | Atomic Redis locking |
 | Throughput | — | 1,190 req/sec |
