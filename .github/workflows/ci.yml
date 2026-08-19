@@ -10,6 +10,31 @@ jobs:
   test:
     runs-on: ubuntu-latest
 
+    # Real MongoDB and Redis for the integration test suite — these
+    # spin up as sidecar containers just for this CI run, isolated
+    # from any real data. No secrets needed: the integration tests
+    # never call Groq or Firebase (see app.js's zero-side-effects
+    # design and requests.test.js's note on skipping AI calls).
+    services:
+      mongodb:
+        image: mongo:7
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --eval 'db.runCommand({ping:1})'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -47,53 +72,14 @@ jobs:
           node --check server/controllers/requestController.js
           echo "✅ All files passed syntax check"
 
-      - name: Run core algorithm tests
+      - name: Write .env.test for CI
         run: |
-          node -e "
-          // ── ETA Tests ──────────────────────────────────────
-          const { calculateETA } = require('./server/services/eta');
+          cat > .env.test << EOF
+          MONGO_URI=mongodb://localhost:27017/swiftaid_test
+          REDIS_URL=redis://localhost:6379
+          JWT_SECRET=ci-test-secret-do-not-use-in-production
+          JWT_EXPIRES_IN=7d
+          EOF
 
-          let passed = 0;
-
-          function assert(condition, msg) {
-            if (!condition) throw new Error('FAILED: ' + msg);
-            console.log('  ✓ ' + msg);
-            passed++;
-          }
-
-          console.log('\\nETA Calculation Tests:');
-          assert(calculateETA(10) === 15, '10km = 15 mins');
-          assert(calculateETA(40) === 60, '40km = 60 mins');
-          assert(calculateETA(0) === 0, '0km = 0 mins');
-          assert(calculateETA(5) === 8, '5km = 8 mins (ceil)');
-          assert(Number.isInteger(calculateETA(7)), 'ETA is always integer');
-          assert(calculateETA(20) > calculateETA(10), 'longer distance = longer ETA');
-
-          // ── Priority Score Tests ────────────────────────────
-          console.log('\\nPriority Queue Tests:');
-          const scores = { cardiac:100, trauma:80, respiratory:70, general:50, non_emergency:10 };
-          assert(scores.cardiac === 100, 'cardiac = 100');
-          assert(scores.trauma === 80, 'trauma = 80');
-          assert(scores.respiratory === 70, 'respiratory = 70');
-          assert(scores.general === 50, 'general = 50');
-          assert(scores.non_emergency === 10, 'non_emergency = 10');
-          assert(scores.cardiac > scores.trauma, 'cardiac beats trauma');
-          assert(scores.trauma > scores.general, 'trauma beats general');
-          assert(scores.general > scores.non_emergency, 'general beats non_emergency');
-
-          // ── Hospital Scoring Tests ──────────────────────────
-          console.log('\\nHospital Scoring Tests:');
-          function score(beds, total, dist, specialty) {
-            const b = total > 0 ? Math.min(beds, total) / total : 0;
-            const d = Math.max(0, 1 - dist / 50);
-            const s = specialty ? 1 : 0;
-            return (b * 0.4) + (d * 0.4) + (s * 0.2);
-          }
-          assert(score(100, 100, 0, true) === 1.0, 'perfect hospital = score 1.0');
-          assert(score(0, 100, 5, false) > 0, 'hospital with 0 beds still has distance score');
-          assert(score(50, 100, 2, false) > score(50, 100, 20, false), 'closer hospital scores higher');
-          assert(score(100, 200, 5, false) > score(10, 200, 5, false), 'more beds scores higher');
-          assert(score(50, 100, 5, true) - score(50, 100, 5, false) > 0.19, 'specialty adds ~0.2');
-
-          console.log('\\n✅ All ' + passed + ' tests passed!');
-          "
+      - name: Run full test suite (unit + integration)
+        run: npm test

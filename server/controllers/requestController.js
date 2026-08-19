@@ -258,6 +258,15 @@ const getRequestById = async (req, res, next) => {
         message: 'Request not found.',
       });
     }
+    if (
+      req.user.role === 'patient' &&
+      request.patientId._id.toString() !== req.user._id.toString()
+    ) {
+      return res.status(403).json({
+        success: false,
+        message: 'You do not have permission to view this request.',
+      });
+    }
 
     // Look up the associated Trip for tripId/ETA — needed by the frontend
     // to join the correct Socket.io room and show live tracking after a

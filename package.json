@@ -5,7 +5,7 @@
   "main": "server/index.js",
   "scripts": {
     "start": "node server/index.js",
-    "test": "jest --testPathPatterns=server/tests --forceExit",
+    "test": "jest --testPathPatterns=server/tests --forceExit --runInBand",
     "dev": "nodemon server/index.js"
   },
   "license": "ISC",
@@ -30,6 +30,7 @@
   ,
 "jest": {
   "testEnvironment": "node",
-  "testTimeout": 10000
+  "testTimeout": 10000,
+  "setupFiles": ["<rootDir>/server/tests/setup/env.js"]
 }
 }
